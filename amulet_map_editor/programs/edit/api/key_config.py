@@ -7,12 +7,14 @@ from amulet_map_editor.api.wx.util.key_config import (
     Space,
     Shift,
     MouseLeft,
+    MouseMiddle,
     MouseRight,
     MouseWheelScrollUp,
     MouseWheelScrollDown,
     Control,
     Alt,
     Tab,
+    Escape
 )
 
 ACT_MOVE_UP = "ACT_MOVE_UP"
@@ -33,6 +35,18 @@ ACT_DELESECT_BOX = "ACT_DELESECT_BOX"
 ACT_INSPECT_BLOCK = "ACT_INSPECT_BLOCK"
 ACT_CHANGE_PROJECTION = "ACT_CHANGE_PROJECTION"
 
+# generation actions
+ACT_CANCEL_GENERATION = "ACT_CANCEL_GENERATION"
+ACT_START_GENERATION_SELECTION = "ACT_START_GENERATION_SELECTION"
+ACT_CONFIRM_GENERATION_SELECTION = "ACT_CONFIRM_GENERATION_SELECTION"
+ACT_INCR_GENERATION_CONTEXT = "ACT_INCR_GENERATION_CONTEXT"
+ACT_DECR_GENERATION_CONTEXT = "ACT_DECR_GENERATION_CONTEXT"
+ACT_CONFIRM_GENERATION_CONTEXT = "ACT_CONFIRM_GENERATION_CONTEXT"
+ACT_CONFIRM_GENERATION_STRUCTURE = "ACT_CONFIRM_GENERATION_STRUCTURE"
+ACT_REDO_GENERATION_STRUCTURE = "ACT_CANCEL_GENERATION_STRUCTURE"
+ACT_CONFIRM_GENERATION_COLOR = "ACT_CONFIRM_GENERATION_COLOR"
+ACT_REDO_GENERATION_COLOR = "ACT_CANCEL_GENERATION_COLOR"
+
 KeybindKeys: List[KeyActionType] = [
     ACT_MOVE_UP,
     ACT_MOVE_DOWN,
@@ -51,6 +65,18 @@ KeybindKeys: List[KeyActionType] = [
     ACT_DELESECT_BOX,
     ACT_INSPECT_BLOCK,
     ACT_CHANGE_PROJECTION,
+
+    #Generation
+    ACT_CANCEL_GENERATION,
+    ACT_START_GENERATION_SELECTION,
+    ACT_CONFIRM_GENERATION_SELECTION,
+    ACT_INCR_GENERATION_CONTEXT,
+    ACT_DECR_GENERATION_CONTEXT,
+    ACT_CONFIRM_GENERATION_CONTEXT,
+    ACT_CONFIRM_GENERATION_STRUCTURE,
+    ACT_REDO_GENERATION_STRUCTURE,
+    ACT_CONFIRM_GENERATION_COLOR,
+    ACT_REDO_GENERATION_COLOR,
 ]
 
 PresetKeybinds: KeybindContainer = {
@@ -72,6 +98,18 @@ PresetKeybinds: KeybindContainer = {
         ACT_DELESECT_BOX: ((Control,), "D"),
         ACT_INSPECT_BLOCK: ((), Alt),
         ACT_CHANGE_PROJECTION: ((), Tab),
+
+        #Generation
+        ACT_CANCEL_GENERATION: ((), Escape),
+        ACT_START_GENERATION_SELECTION: ((), MouseMiddle),
+        ACT_CONFIRM_GENERATION_SELECTION:((), MouseLeft),
+        ACT_INCR_GENERATION_CONTEXT: ((), MouseWheelScrollUp),
+        ACT_DECR_GENERATION_CONTEXT: ((), MouseWheelScrollDown),
+        ACT_CONFIRM_GENERATION_CONTEXT: ((), MouseLeft),
+        ACT_CONFIRM_GENERATION_STRUCTURE: ((), MouseLeft),
+        ACT_REDO_GENERATION_STRUCTURE: ((), MouseRight),
+        ACT_CONFIRM_GENERATION_COLOR: ((), MouseLeft),
+        ACT_REDO_GENERATION_COLOR: ((), MouseRight),
     },
     "right_laptop": {
         ACT_MOVE_UP: ((), Space),
@@ -91,6 +129,18 @@ PresetKeybinds: KeybindContainer = {
         ACT_DELESECT_BOX: ((Control,), "D"),
         ACT_INSPECT_BLOCK: ((), Alt),
         ACT_CHANGE_PROJECTION: ((), Tab),
+        
+        #Generation
+        ACT_CANCEL_GENERATION: ((), Escape),
+        ACT_START_GENERATION_SELECTION: ((), MouseMiddle),
+        ACT_CONFIRM_GENERATION_SELECTION:((), MouseLeft),
+        ACT_INCR_GENERATION_CONTEXT: ((), MouseWheelScrollUp),
+        ACT_DECR_GENERATION_CONTEXT: ((), MouseWheelScrollDown),
+        ACT_CONFIRM_GENERATION_CONTEXT: ((), MouseLeft),
+        ACT_CONFIRM_GENERATION_STRUCTURE: ((), MouseLeft),
+        ACT_REDO_GENERATION_STRUCTURE: ((), MouseRight),
+        ACT_CONFIRM_GENERATION_COLOR: ((), MouseLeft),
+        ACT_REDO_GENERATION_COLOR: ((), MouseRight),
     },
     "left": {
         ACT_MOVE_UP: ((), Space),
@@ -110,6 +160,18 @@ PresetKeybinds: KeybindContainer = {
         ACT_DELESECT_BOX: ((Control,), "D"),
         ACT_INSPECT_BLOCK: ((), Alt),
         ACT_CHANGE_PROJECTION: ((), Tab),
+
+        #Generation
+        ACT_CANCEL_GENERATION: ((), Escape),
+        ACT_START_GENERATION_SELECTION: ((), MouseMiddle),
+        ACT_CONFIRM_GENERATION_SELECTION:((), MouseRight),
+        ACT_INCR_GENERATION_CONTEXT: ((), MouseWheelScrollUp),
+        ACT_DECR_GENERATION_CONTEXT: ((), MouseWheelScrollDown),
+        ACT_CONFIRM_GENERATION_CONTEXT: ((), MouseRight),
+        ACT_CONFIRM_GENERATION_STRUCTURE: ((), MouseRight),
+        ACT_REDO_GENERATION_STRUCTURE: ((), MouseLeft),
+        ACT_CONFIRM_GENERATION_COLOR: ((), MouseRight),
+        ACT_REDO_GENERATION_COLOR: ((), MouseLeft),
     },
     "left_laptop": {
         ACT_MOVE_UP: ((), Space),
@@ -129,6 +191,18 @@ PresetKeybinds: KeybindContainer = {
         ACT_DELESECT_BOX: ((Control,), "D"),
         ACT_INSPECT_BLOCK: ((), Alt),
         ACT_CHANGE_PROJECTION: ((), Tab),
+
+        #Generation
+        ACT_CANCEL_GENERATION: ((), Escape),
+        ACT_START_GENERATION_SELECTION: ((), MouseMiddle),
+        ACT_CONFIRM_GENERATION_SELECTION:((), MouseRight),
+        ACT_INCR_GENERATION_CONTEXT: ((), MouseWheelScrollUp),
+        ACT_DECR_GENERATION_CONTEXT: ((), MouseWheelScrollDown),
+        ACT_CONFIRM_GENERATION_CONTEXT: ((), MouseRight),
+        ACT_CONFIRM_GENERATION_STRUCTURE: ((), MouseRight),
+        ACT_REDO_GENERATION_STRUCTURE: ((), MouseLeft),
+        ACT_CONFIRM_GENERATION_COLOR: ((), MouseRight),
+        ACT_REDO_GENERATION_COLOR: ((), MouseLeft),
     },
 }
 
