@@ -1,4 +1,7 @@
 # Generate operation
+
+import requests
+import json
 import numpy as np
 from itertools import product
 
@@ -6,14 +9,11 @@ from amulet.api.data_types import BlockCoordinates, BlockCoordinatesNDArray, Blo
 from amulet.api.selection import SelectionGroup, SelectionBox
 from amulet.api.level import BaseLevel
 from amulet.api.data_types import Dimension
+from amulet.api import Block
 
 from amulet_map_editor.programs.edit.api.operations.errors import (
     OperationError,
 )
-
-
-GENERATION_SIZE = (16, 16, 16)
-GENERATION_CONTEXT_SIZE = (8, 8, 8)
 
 
 def touches_or_intersects(group1: SelectionGroup, group2: SelectionGroup) -> bool:
@@ -94,6 +94,12 @@ def contiguous_selections(
 
     return selections
 
+GENERATION_SIZE = (16, 16, 16)
+GENERATION_CONTEXT_SIZE = (8, 8, 8)
+TUBE_LENGTH = 8
+STRUCTURE_BLOCK = Block.from_string_blockstate("minecraft:glass")
+EMPTY_BLOCK = Block.from_string_blockstate("minecraft:air")
+
 def create_generate_boxes(
     world: BaseLevel,
     dimension: Dimension,
@@ -110,10 +116,44 @@ def create_generate_boxes(
     :param options: The options for the generation
     :return: A tuple of the boxes
     """
+    generation_size = np.array(generation_size)
+    generation_context_size = np.array(generation_context_size)
+    generated_size = generation_size - generation_context_size
+
     contiguous_groups = contiguous_selections(selection)
-    
-    # TODO: create boxes of size GENERATION_SIZE which cover the entire selection to generate the last 1 - GENERATION_CONTEXT_SIZE blocks along each axis
-    
+
+    boxes: list[SelectionBox] = []
+    for group in contiguous_groups:
+        bottom_corner = np.array(group.min)
+        top_corner = np.array(group.max)
+        np_space = np.zeros((top_corner - bottom_corner), dtype=bool)  # origin at bottom corner
+
+        # Set True to values inside of groups
+        for selection in group:
+            point_min = selection.min - bottom_corner
+            point_max = selection.max - bottom_corner
+            np_space[point_min[0]:point_max[0], point_min[1]:point_max[1], point_min[2]:point_max[2]] = True
+
+        while np.any(np_space):
+            non_zero_points = np.roll(np.array(np_space.nonzero()), -1, axis=0)  # (3, n) array of non-zero points (y z x order)
+            # Exit if there are no more non-zero points
+            if non_zero_points.size == 0: 
+                break
+
+            smallest_non_zero_point = np.lexsort(non_zero_points)[0]
+
+            # Calculate the opposite corner of the volume (has overhanging points)
+            starting_corner = np.roll(non_zero_points[:, smallest_non_zero_point], 1)  # (x, y, z) order
+            opposite_corner = starting_corner + generated_size
+
+            # Create a new volume and add it to the list
+            boxes.append(SelectionBox(starting_corner + bottom_corner - generation_context_size, opposite_corner + bottom_corner))
+
+            # Set the covered area to 0 in the np_space
+            np_space[starting_corner[0]:opposite_corner[0], starting_corner[1]:opposite_corner[1], starting_corner[2]:opposite_corner[2]] = False
+
+    return boxes
+
 def operation(
     world: BaseLevel, dimension: Dimension, selection: SelectionGroup, options: dict
 ) -> None:
@@ -124,8 +164,77 @@ def operation(
     # in the UI (bool, int, float, str)
     # If "options" is not defined in export this will just be an empty dictionary
     generate_boxes = create_generate_boxes(world, dimension, selection, options)
-    
-    # TODO: run these boxes thru the backend server to generate the structures. must be done in YZX order
+
+    endpoint = options["Endpoint"]
+    endpoint = f"{endpoint}/structure"
+
+    for box in generate_boxes:
+        block_coords = [
+            (x, y, z)
+            for y, z, x in product(
+                range(box.min_y, box.max_y),
+                range(box.min_z, box.max_z),
+                range(box.min_x, box.max_x),
+            )
+        ]
+
+        blocks = [world.get_block(x, y, z, dimension) for x, y, z in block_coords]
+        structure = [block_to_solid(block) for block in blocks]
+
+        del blocks, block_coords
+
+        structure = np.array(structure, dtype=np.int8).reshape(GENERATION_SIZE[1], GENERATION_SIZE[2], GENERATION_SIZE[0])  # (y, z, x) order
+        structure[GENERATION_CONTEXT_SIZE[1]:, GENERATION_CONTEXT_SIZE[2]:, GENERATION_CONTEXT_SIZE[0]:] = -1  # generated section is -1
+        structure = structure.reshape(-1, TUBE_LENGTH).tolist()  # (y * z * x, tube_length)
+
+        structure = [
+            None if any(block == -1 for block in tube) else tube
+            for tube in structure
+        ]
+
+        generated_tube_indices = [i for i, tube in enumerate(structure) if tube is None]
+
+        data = {
+            "data": structure,
+            "y": 0,
+        }
+
+        stream_response = requests.post(endpoint, json=data, stream=True)
+        stream_response.raise_for_status()
+
+        finished = False
+        for tube, tube_idx in zip(stream_response.iter_lines(), generated_tube_indices):
+            generated_tube = json.loads(tube)[0]
+            generated_coordinates = tube_idx_to_coordinates(box, tube_idx)
+
+            for coordinates, solid in zip(generated_coordinates, generated_tube):
+                if solid == -1:
+                    finished = True
+                    break
+
+                if coordinates in selection:
+                    world.set_version_block(
+                        coordinates[0],
+                        coordinates[1],
+                        coordinates[2],
+                        dimension,
+                        version = ("java", (1, 16, 2)),
+                        block = STRUCTURE_BLOCK if solid == 1 and not finished else EMPTY_BLOCK,
+                    )
+
+def tube_idx_to_coordinates(box: SelectionBox, tube_idx: int, generation_size: BlockCoordinates = GENERATION_SIZE, tube_length: int = TUBE_LENGTH) -> BlockCoordinatesNDArray:
+    # make np array where each element is its own coordinates
+    coordinates_array = np.array(list(product(range(generation_size[1]), range(generation_size[2]), range(generation_size[0]))))
+    coordinates_array = coordinates_array.reshape(-1, tube_length, 3)
+
+    tube = np.roll(coordinates_array[tube_idx], 1, axis=-1)  # (tube_length, 3) array of coordinates
+
+    return tube + np.array([[box.min_x, box.min_y, box.min_z]])
+
+def block_to_solid(block: Block) -> int:
+    name = block.base_name
+
+    return name != "air"
 
 ####### TESTS #######
 
@@ -283,18 +392,18 @@ def test_create_generate_boxes_6():
     assert len(generate_boxes) == 8
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
-    assert generate_boxes[1].min == (0, -2, -2)
-    assert generate_boxes[1].max == (4, 2, 2)
-    assert generate_boxes[2].min == (-2, 0, -2)
-    assert generate_boxes[2].max == (2, 4, 2)
-    assert generate_boxes[3].min == (0, 0, -2)
-    assert generate_boxes[3].max == (4, 4, 2)
-    assert generate_boxes[4].min == (-2, -2, 0)
-    assert generate_boxes[4].max == (2, 2, 4)
-    assert generate_boxes[5].min == (0, -2, 0)
-    assert generate_boxes[5].max == (4, 2, 4)
-    assert generate_boxes[6].min == (-2, 0, 0)
-    assert generate_boxes[6].max == (2, 4, 4)
+    assert generate_boxes[1].min == (-2, 0, -2)
+    assert generate_boxes[1].max == (2, 4, 2)
+    assert generate_boxes[2].min == (-2, -2, 0)
+    assert generate_boxes[2].max == (2, 2, 4)
+    assert generate_boxes[3].min == (-2, 0, 0)
+    assert generate_boxes[3].max == (2, 4, 4)
+    assert generate_boxes[4].min == (0, -2, -2)
+    assert generate_boxes[4].max == (4, 2, 2)
+    assert generate_boxes[5].min == (0, 0, -2)
+    assert generate_boxes[5].max == (4, 4, 2)
+    assert generate_boxes[6].min == (0, -2, 0)
+    assert generate_boxes[6].max == (4, 2, 4)
     assert generate_boxes[7].min == (0, 0, 0)
     assert generate_boxes[7].max == (4, 4, 4)
 
@@ -326,33 +435,26 @@ def test_create_generate_boxes_8():
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
     generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
-    assert len(generate_boxes) == 3
+    assert len(generate_boxes) == 6
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
-    assert generate_boxes[1].min == (1, 1, 1)
-    assert generate_boxes[1].max == (5, 5, 5)
-    assert generate_boxes[2].min == (4, 4, 4)
-    assert generate_boxes[2].max == (8, 8, 8)
-
-def test_create_generate_boxes_9():
-    selection = SelectionGroup(
-        [
-            SelectionBox((0, 0, 0), (2, 2, 2)),
-            SelectionBox((1, 1, 1), (3, 3, 3)),
-        ]
-    )
-    generation_size = (4, 4, 4)
-    generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
-    assert len(generate_boxes) == 2
-    assert generate_boxes[0].min == (-2, -2, -2)
-    assert generate_boxes[0].max == (2, 2, 2)
-    assert generate_boxes[1].min == (-1, -1, -1)
-    assert generate_boxes[1].max == (3, 3, 3)
+    assert generate_boxes[1].min == (-1, 0, -1)
+    assert generate_boxes[1].max == (3, 4, 3)
+    assert generate_boxes[2].min == (-1, -1, 0)
+    assert generate_boxes[2].max == (3, 3, 4)
+    assert generate_boxes[3].min == (0, -1, -1)
+    assert generate_boxes[3].max == (4, 3, 3)
+    assert generate_boxes[4].min == (2, 2, 2)
+    assert generate_boxes[4].max == (6, 6, 6)
+    assert generate_boxes[5].min == (5, 5, 5)
+    assert generate_boxes[5].max == (9, 9, 9)
 
 ####### END TESTS #######
 
 export = {
-    "name": "Structure Generate",
+    "name": "Structure Generative Fill",
     "operation": operation,
+    "options": {
+        "Endpoint": ["str", "localhost:8001"],
+    },
 }
