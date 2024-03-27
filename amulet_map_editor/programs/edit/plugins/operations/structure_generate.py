@@ -97,7 +97,6 @@ def contiguous_selections(
 GENERATION_SIZE = (16, 16, 16)
 GENERATION_CONTEXT_SIZE = (8, 8, 8)
 TUBE_LENGTH = 8
-STRUCTURE_BLOCK = Block.from_string_blockstate("minecraft:glass")
 EMPTY_BLOCK = Block.from_string_blockstate("minecraft:air")
 
 def create_generate_boxes(
@@ -157,6 +156,8 @@ def create_generate_boxes(
 def operation(
     world: BaseLevel, dimension: Dimension, selection: SelectionGroup, options: dict
 ) -> None:
+    structure_block = Block.from_string_blockstate(options["Structure Block Type"])
+
     # When the user presses the run button this function will be run as normal but
     # since the "options" key was defined in export this function will get another
     # input in the form of a dictionary where the keys are the same as you defined
@@ -168,7 +169,7 @@ def operation(
     endpoint = options["Endpoint"]
     endpoint = f"{endpoint}/structure"
 
-    for box in generate_boxes:
+    for i, box in enumerate(generate_boxes):
         block_coords = [
             (x, y, z)
             for y, z, x in product(
@@ -188,22 +189,36 @@ def operation(
         structure = structure.reshape(-1, TUBE_LENGTH).tolist()  # (y * z * x, tube_length)
 
         structure = [
-            None if any(block == -1 for block in tube) else tube
+            [
+                is_solid if is_solid != -1 else None
+                for is_solid in tube
+            ]
             for tube in structure
         ]
 
-        generated_tube_indices = [i for i, tube in enumerate(structure) if tube is None]
+        generated_tube_indices = [i for i, tube in enumerate(structure) if None in tube]
+
+        strategy = {
+            "strategy": options["Sampling Strategy"],
+        }
+
+        if strategy["strategy"] == "topk":
+            strategy["k"] = options["Top K"]
+        elif strategy["strategy"] == "nucleus":
+            strategy["p"] = float(options["Top P"])
 
         data = {
             "data": structure,
             "y": 0,
+            "sampling": strategy,
         }
 
         stream_response = requests.post(endpoint, json=data, stream=True)
-        stream_response.raise_for_status()
 
         finished = False
-        for tube, tube_idx in zip(stream_response.iter_lines(), generated_tube_indices):
+        for j, (tube, tube_idx) in enumerate(zip(stream_response.iter_lines(), generated_tube_indices)):
+            yield (i + j / len(generated_tube_indices)) / len(generate_boxes)
+
             generated_tube = json.loads(tube)[0]
             generated_coordinates = tube_idx_to_coordinates(box, tube_idx)
 
@@ -219,7 +234,7 @@ def operation(
                         coordinates[2],
                         dimension,
                         version = ("java", (1, 16, 2)),
-                        block = STRUCTURE_BLOCK if solid == 1 and not finished else EMPTY_BLOCK,
+                        block = structure_block if solid == 1 and not finished else EMPTY_BLOCK,
                     )
 
 def tube_idx_to_coordinates(box: SelectionBox, tube_idx: int, generation_size: BlockCoordinates = GENERATION_SIZE, tube_length: int = TUBE_LENGTH) -> BlockCoordinatesNDArray:
@@ -455,6 +470,13 @@ export = {
     "name": "Structure Generative Fill",
     "operation": operation,
     "options": {
-        "Endpoint": ["str", "localhost:8001"],
+        "X Context Length": ["int", -GENERATION_CONTEXT_SIZE[0]],
+        "Y Context Length": ["int", -GENERATION_CONTEXT_SIZE[1]],
+        "Z Context Length": ["int", -GENERATION_CONTEXT_SIZE[2]],
+        "Structure Block Type": ["str", "minecraft:glass"],
+        "Sampling Strategy": ["str_choice", "sample", "greedy", "topk", "nucleus"],
+        "Top K": ["int", 8, 1, 256],
+        "Top P": ["str", "0.9"],
+        "Endpoint": ["str", "http://localhost:8001"],
     },
 }
