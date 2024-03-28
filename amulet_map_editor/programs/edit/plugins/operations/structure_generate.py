@@ -239,9 +239,17 @@ def operation(
         }
 
         stream_response = requests.post(endpoint, json=data, stream=True)
+        stream_response_iter = stream_response.iter_lines()
 
         finished = False
-        for j, (tube, tube_idx) in enumerate(zip(stream_response.iter_lines(), generated_tube_indices)):
+        for j, tube_idx in enumerate(generated_tube_indices):
+            if not finished:
+                try:
+                    tube = next(stream_response_iter)
+                    print(tube)
+                except StopIteration:
+                    finished = True
+
             yield (i + j / len(generated_tube_indices)) / len(generate_boxes)
 
             generated_tube = json.loads(tube)[0]
@@ -250,7 +258,6 @@ def operation(
             for coordinates, solid in zip(generated_coordinates, generated_tube):
                 if solid == -1:
                     finished = True
-                    break
 
                 if coordinates in selection:
                     world.set_version_block(
