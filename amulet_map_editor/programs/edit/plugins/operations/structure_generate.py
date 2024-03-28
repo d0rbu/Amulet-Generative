@@ -246,7 +246,6 @@ def operation(
             if not finished:
                 try:
                     tube = next(stream_response_iter)
-                    print(tube)
                 except StopIteration:
                     finished = True
 
