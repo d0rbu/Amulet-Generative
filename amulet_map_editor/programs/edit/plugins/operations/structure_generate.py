@@ -167,7 +167,10 @@ def create_generate_boxes(
             opposite_corner = starting_corner + generated_size_for_this_box
 
             # Create a new volume and add it to the list
-            boxes.append(SelectionBox(starting_corner + bottom_corner - generation_context_size_for_this_box, opposite_corner + bottom_corner))
+            boxes.append((
+                SelectionBox(starting_corner + bottom_corner - generation_context_size_for_this_box, opposite_corner + bottom_corner),
+                generation_context_size_for_this_box,
+            ))
 
             # Set the covered area to 0 in the np_space
             np_space[starting_corner[0]:opposite_corner[0], starting_corner[1]:opposite_corner[1], starting_corner[2]:opposite_corner[2]] = False
@@ -191,7 +194,7 @@ def operation(
     endpoint = options["Endpoint"]
     endpoint = f"{endpoint}/structure"
 
-    for i, box in enumerate(generate_boxes):
+    for i, (box, box_generation_context_size) in enumerate(generate_boxes):
         block_coords = [
             (x, y, z)
             for y, z, x in product(
@@ -207,7 +210,7 @@ def operation(
         del blocks, block_coords
 
         structure = np.array(structure, dtype=np.int8).reshape(GENERATION_SIZE[1], GENERATION_SIZE[2], GENERATION_SIZE[0])  # (y, z, x) order
-        structure[GENERATION_CONTEXT_SIZE[1]:, GENERATION_CONTEXT_SIZE[2]:, GENERATION_CONTEXT_SIZE[0]:] = -1  # generated section is -1
+        structure[box_generation_context_size[1]:, box_generation_context_size[2]:, box_generation_context_size[0]:] = -1  # set the context to -1
         structure = structure.reshape(-1, TUBE_LENGTH).tolist()  # (y * z * x, tube_length)
 
         structure = [
