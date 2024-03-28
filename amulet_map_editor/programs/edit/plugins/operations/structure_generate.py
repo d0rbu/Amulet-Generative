@@ -4,6 +4,7 @@ import requests
 import json
 import numpy as np
 from itertools import product
+from typing import Generator
 
 from amulet.api.data_types import BlockCoordinates, BlockCoordinatesNDArray, BlockCoordinatesAny
 from amulet.api.selection import SelectionGroup, SelectionBox
@@ -119,6 +120,16 @@ def create_generate_boxes(
     generation_context_size = np.array(generation_context_size)
     generated_size = generation_size - generation_context_size
 
+    total_context_offset = (
+        options["X Context Length"],
+        options["Y Context Length"],
+        options["Z Context Length"],
+    )
+    total_context_offset = np.array(total_context_offset)
+    total_context_direction = (total_context_offset >= 0).astype(int) * 2 - 1
+    total_context_size = np.stack([np.abs(total_context_offset), generation_size - 1], axis=0).min(axis=0)  # ensure we can generate something
+    initial_generated_size = generation_size - total_context_size
+
     contiguous_groups = contiguous_selections(selection)
 
     boxes: list[SelectionBox] = []
@@ -136,17 +147,27 @@ def create_generate_boxes(
         while np.any(np_space):
             non_zero_points = np.roll(np.array(np_space.nonzero()), -1, axis=0)  # (3, n) array of non-zero points (y z x order)
             # Exit if there are no more non-zero points
-            if non_zero_points.size == 0: 
+            if non_zero_points.size == 0:
                 break
 
             smallest_non_zero_point = np.lexsort(non_zero_points)[0]
 
             # Calculate the opposite corner of the volume (has overhanging points)
             starting_corner = np.roll(non_zero_points[:, smallest_non_zero_point], 1)  # (x, y, z) order
-            opposite_corner = starting_corner + generated_size
+
+            generated_size_for_this_box = generated_size
+            generation_context_size_for_this_box = generation_context_size
+
+            if np.any(starting_corner == 0):
+                # If the starting corner is at the starting edge of the volume
+                # use the initial_generated_size
+                generated_size_for_this_box = initial_generated_size
+                generation_context_size_for_this_box = total_context_size
+
+            opposite_corner = starting_corner + generated_size_for_this_box
 
             # Create a new volume and add it to the list
-            boxes.append(SelectionBox(starting_corner + bottom_corner - generation_context_size, opposite_corner + bottom_corner))
+            boxes.append(SelectionBox(starting_corner + bottom_corner - generation_context_size_for_this_box, opposite_corner + bottom_corner))
 
             # Set the covered area to 0 in the np_space
             np_space[starting_corner[0]:opposite_corner[0], starting_corner[1]:opposite_corner[1], starting_corner[2]:opposite_corner[2]] = False
@@ -155,8 +176,9 @@ def create_generate_boxes(
 
 def operation(
     world: BaseLevel, dimension: Dimension, selection: SelectionGroup, options: dict
-) -> None:
-    structure_block = Block.from_string_blockstate(options["Structure Block Type"])
+) -> Generator[float, None, None]:
+    structure_block_type = options["Structure Block Type"]
+    structure_block = Block.from_string_blockstate(f"minecraft:{structure_block_type}")
 
     # When the user presses the run button this function will be run as normal but
     # since the "options" key was defined in export this function will get another
@@ -473,7 +495,7 @@ export = {
         "X Context Length": ["int", -GENERATION_CONTEXT_SIZE[0]],
         "Y Context Length": ["int", -GENERATION_CONTEXT_SIZE[1]],
         "Z Context Length": ["int", -GENERATION_CONTEXT_SIZE[2]],
-        "Structure Block Type": ["str", "minecraft:glass"],
+        "Structure Block Type": ["str", "oak_planks"],
         "Sampling Strategy": ["str_choice", "sample", "greedy", "topk", "nucleus"],
         "Top K": ["int", 8, 1, 256],
         "Top P": ["str", "0.9"],
