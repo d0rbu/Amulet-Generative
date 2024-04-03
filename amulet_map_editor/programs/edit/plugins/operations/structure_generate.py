@@ -100,7 +100,10 @@ GENERATION_CONTEXT_SIZE = (8, 8, 8)
 TUBE_LENGTH = 8
 EMPTY_BLOCK = Block.from_string_blockstate("minecraft:air")
 
-def create_generate_boxes(
+def nonzero_sign(x: np.ndarray) -> np.ndarray:
+    return (x < 0).astype(int) * 2 - 1
+
+def create_generate_boxes_with_direction(
     world: BaseLevel,
     dimension: Dimension,
     selection: SelectionGroup,
@@ -126,14 +129,16 @@ def create_generate_boxes(
         options["Z Context Length"],
     )
     total_context_offset = np.array(total_context_offset)
-    total_context_direction = (total_context_offset >= 0).astype(int) * 2 - 1
+    total_context_direction = nonzero_sign(total_context_offset)
     total_context_size = np.stack([np.abs(total_context_offset), generation_size - 1], axis=0).min(axis=0)  # ensure we can generate something
     initial_generated_size = generation_size - total_context_size
 
     contiguous_groups = contiguous_selections(selection)
 
+    aligned_groups = orient_groups(contiguous_groups, total_context_direction)
+
     boxes: list[SelectionBox] = []
-    for group in contiguous_groups:
+    for group in aligned_groups:
         bottom_corner = np.array(group.min)
         top_corner = np.array(group.max)
         np_space = np.zeros((top_corner - bottom_corner), dtype=bool)  # origin at bottom corner
@@ -168,14 +173,31 @@ def create_generate_boxes(
 
             # Create a new volume and add it to the list
             boxes.append((
-                SelectionBox(starting_corner + bottom_corner - generation_context_size_for_this_box, opposite_corner + bottom_corner),
+                orient_box(SelectionBox(starting_corner + bottom_corner - generation_context_size_for_this_box, opposite_corner + bottom_corner), total_context_direction),
                 generation_context_size_for_this_box,
             ))
 
             # Set the covered area to 0 in the np_space
             np_space[starting_corner[0]:opposite_corner[0], starting_corner[1]:opposite_corner[1], starting_corner[2]:opposite_corner[2]] = False
 
-    return boxes
+    return boxes, total_context_direction
+
+def orient_box(box: SelectionBox, direction: BlockCoordinates) -> SelectionBox:
+    # Manage off one error (not even splitting)
+    inclusive_points = np.empty((2, 3), dtype=int)
+    inclusive_points[0] = box.min_array
+    inclusive_points[1] = box.max_array - 1
+
+    inverted_box_inclusive = SelectionBox(*(inclusive_points * np.expand_dims(direction, 0)).tolist())
+    inverted_inclusive_points = inverted_box_inclusive.min_array, inverted_box_inclusive.max_array + 1
+
+    return SelectionBox(*(inverted_inclusive_points))
+
+def orient_boxes(boxes: list[SelectionBox], direction: BlockCoordinates) -> list[SelectionBox]:
+    return [orient_box(box, direction) for box in boxes]
+
+def orient_groups(groups: list[SelectionGroup], direction: BlockCoordinates) -> list[SelectionGroup]:
+    return [SelectionGroup(orient_boxes(group.selection_boxes, direction)) for group in groups]
 
 def operation(
     world: BaseLevel, dimension: Dimension, selection: SelectionGroup, options: dict
@@ -189,25 +211,36 @@ def operation(
     # them in the options dictionary above and the values are what the user picked
     # in the UI (bool, int, float, str)
     # If "options" is not defined in export this will just be an empty dictionary
-    generate_boxes = create_generate_boxes(world, dimension, selection, options)
+    generate_boxes, context_sign = create_generate_boxes_with_direction(world, dimension, selection, options)
 
     endpoint = options["Endpoint"]
     endpoint = f"{endpoint}/structure"
 
     for i, (box, box_generation_context_size) in enumerate(generate_boxes):
+        x_generator = range(box.min_x, box.max_x)
+        y_generator = range(box.min_y, box.max_y)
+        z_generator = range(box.min_z, box.max_z)
+
+        if context_sign[0] < 0:
+            x_generator = reversed(x_generator)
+        if context_sign[1] < 0:
+            y_generator = reversed(y_generator)
+        if context_sign[2] < 0:
+            z_generator = reversed(z_generator)
+
         block_coords = [
             (x, y, z)
             for y, z, x in product(
-                range(box.min_y, box.max_y),
-                range(box.min_z, box.max_z),
-                range(box.min_x, box.max_x),
+                y_generator,
+                z_generator,
+                x_generator,
             )
         ]
 
         blocks = [world.get_block(x, y, z, dimension) for x, y, z in block_coords]
         structure = [block_to_solid(block) for block in blocks]
 
-        del blocks, block_coords
+        del blocks
 
         structure = np.array(structure, dtype=np.int8).reshape(GENERATION_SIZE[1], GENERATION_SIZE[2], GENERATION_SIZE[0])  # (y, z, x) order
         structure[box_generation_context_size[1]:, box_generation_context_size[2]:, box_generation_context_size[0]:] = -1  # set the context to -1
@@ -252,7 +285,7 @@ def operation(
             yield (i + j / len(generated_tube_indices)) / len(generate_boxes)
 
             generated_tube = json.loads(tube)[0]
-            generated_coordinates = tube_idx_to_coordinates(box, tube_idx)
+            generated_coordinates = tube_idx_to_coordinates(box, tube_idx, block_coords)
 
             for coordinates, solid in zip(generated_coordinates, generated_tube):
                 if solid == -1:
@@ -268,14 +301,13 @@ def operation(
                         block = structure_block if solid == 1 and not finished else EMPTY_BLOCK,
                     )
 
-def tube_idx_to_coordinates(box: SelectionBox, tube_idx: int, generation_size: BlockCoordinates = GENERATION_SIZE, tube_length: int = TUBE_LENGTH) -> BlockCoordinatesNDArray:
+def tube_idx_to_coordinates(box: SelectionBox, tube_idx: int, block_coords: list[tuple[int]], generation_size: BlockCoordinates = GENERATION_SIZE, tube_length: int = TUBE_LENGTH) -> BlockCoordinatesNDArray:
     # make np array where each element is its own coordinates
-    coordinates_array = np.array(list(product(range(generation_size[1]), range(generation_size[2]), range(generation_size[0]))))
-    coordinates_array = coordinates_array.reshape(-1, tube_length, 3)
+    coordinates_array = np.array(block_coords, dtype=int).reshape(-1, tube_length, 3)
 
-    tube = np.roll(coordinates_array[tube_idx], 1, axis=-1)  # (tube_length, 3) array of coordinates
+    tube = coordinates_array[tube_idx]
 
-    return tube + np.array([[box.min_x, box.min_y, box.min_z]])
+    return tube
 
 def block_to_solid(block: Block) -> int:
     name = block.base_name
@@ -357,7 +389,7 @@ def test_contiguous_selections_6():
 
 def test_create_generate_boxes_1():
     selection = SelectionGroup([])
-    generate_boxes = create_generate_boxes(None, None, selection, None)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None)
     assert len(generate_boxes) == 0
 
 def test_create_generate_boxes_2():
@@ -368,7 +400,7 @@ def test_create_generate_boxes_2():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 1
     assert generate_boxes[0].min == (1, 1, 1)
     assert generate_boxes[0].max == (5, 5, 5)
@@ -383,7 +415,7 @@ def test_create_generate_boxes_3():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 3
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
@@ -400,7 +432,7 @@ def test_create_generate_boxes_4():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 2
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
@@ -415,7 +447,7 @@ def test_create_generate_boxes_5():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 4 
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
@@ -434,7 +466,7 @@ def test_create_generate_boxes_6():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 8
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
@@ -462,7 +494,7 @@ def test_create_generate_boxes_7():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 1
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
@@ -480,7 +512,7 @@ def test_create_generate_boxes_8():
     )
     generation_size = (4, 4, 4)
     generation_context_size = (2, 2, 2)
-    generate_boxes = create_generate_boxes(None, None, selection, None, generation_size, generation_context_size)
+    generate_boxes = create_generate_boxes_with_direction(None, None, selection, None, generation_size, generation_context_size)
     assert len(generate_boxes) == 6
     assert generate_boxes[0].min == (-2, -2, -2)
     assert generate_boxes[0].max == (2, 2, 2)
