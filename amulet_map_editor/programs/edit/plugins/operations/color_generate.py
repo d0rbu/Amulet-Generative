@@ -69,19 +69,22 @@ def operation(
         if context_sign[2] < 0:
             z_generator = reversed(z_generator)
 
-        blocks = np.empty((len(y_generator), len(z_generator), len(x_generator)), dtype=np.int16)
+        blocks = np.empty((box.max_y - box.min_y, box.max_z - box.min_z, box.max_x - box.min_x), dtype=np.int16)
+        generation_mask = np.zeros_like(blocks, dtype=np.bool_)
         for world_y, world_z, world_x in product(y_generator, z_generator, x_generator):
             y, z, x = world_y - box.min_y, world_z - box.min_z, world_x - box.min_x
             blocks[y, z, x] = name_to_id(world.get_block(world_x, world_y, world_z, dimension).base_name)
 
-        generation_mask = blocks > 0
-        blocks[box_generation_context_size[1]:, box_generation_context_size[2]:, box_generation_context_size[0]:] = -1  # set the context to -1
+        structure_mask = blocks > 0
+        generation_mask[box_generation_context_size[1]:, box_generation_context_size[2]:, box_generation_context_size[0]:] = True  # set the context to True
         blocks = blocks.tolist()
+        generation_mask = generation_mask.tolist()
 
         num_steps = options["Steps"]
 
         data = {
             "data": [blocks],
+            "mask": [generation_mask],
             "y": 0,
             "steps": num_steps,
             "strength": inpaint_strength,
@@ -96,7 +99,7 @@ def operation(
             generated_blocks = json.loads(noised_sample)
 
             for local_coordinates, block_id in generated_blocks:
-                if not generation_mask[local_coordinates[4], local_coordinates[2], local_coordinates[3]]:
+                if not structure_mask[local_coordinates[2], local_coordinates[3], local_coordinates[4]]:
                     continue  # we are not to generate on air blocks
 
                 coordinates = (
@@ -112,7 +115,7 @@ def operation(
                         coordinates[1],
                         coordinates[2],
                         dimension,
-                        version=("java", (1, 16, 2)),
+                        version=("java", (1, 13, 0)),
                         block=block,
                     )
                 else:
