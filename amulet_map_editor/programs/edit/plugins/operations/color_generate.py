@@ -128,7 +128,7 @@ export = {
         "X Context Length": ["int", -GENERATION_CONTEXT_SIZE[0]],
         "Y Context Length": ["int", -GENERATION_CONTEXT_SIZE[1]],
         "Z Context Length": ["int", -GENERATION_CONTEXT_SIZE[2]],
-        "Steps": ["int", 64, 1, 256],
+        "Steps": ["int", 512, 1, 1024],
         "Inpaint Strength": ["str", "1.0"],
         "Endpoint": ["str", "http://localhost:8001"],
     },
