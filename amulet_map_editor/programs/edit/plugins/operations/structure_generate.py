@@ -99,6 +99,7 @@ GENERATION_SIZE = (16, 16, 16)
 GENERATION_CONTEXT_SIZE = (8, 8, 8)
 TUBE_LENGTH = 8
 EMPTY_BLOCK = Block.from_string_blockstate("minecraft:air")
+TUBES_PER_PLANE = GENERATION_SIZE[1] * GENERATION_SIZE[2] // TUBE_LENGTH
 
 def nonzero_sign(x: np.ndarray) -> np.ndarray:
     return (x < 0).astype(int) * 2 - 1
@@ -267,7 +268,8 @@ def operation(
 
         data = {
             "data": structure,
-            "y": 0,
+            "y": TUBES_PER_PLANE * box.min_y,
+            # "y": 0,
             "sampling": strategy,
         }
 
@@ -275,6 +277,8 @@ def operation(
         stream_response_iter = stream_response.iter_lines()
 
         finished = False
+        coordinates_so_far = []
+        tubes_so_far = []
         for j, tube_idx in enumerate(generated_tube_indices):
             if not finished:
                 try:
@@ -287,19 +291,37 @@ def operation(
             generated_tube = json.loads(tube)[0]
             generated_coordinates = tube_idx_to_coordinates(box, tube_idx, block_coords)
 
-            for coordinates, solid in zip(generated_coordinates, generated_tube):
-                if solid == -1:
-                    finished = True
+            if options["Progressive Generation"]:
+                tubes_so_far.append(generated_tube)
+                coordinates_so_far.append(generated_coordinates)
 
-                if coordinates in selection:
-                    world.set_version_block(
-                        coordinates[0],
-                        coordinates[1],
-                        coordinates[2],
-                        dimension,
-                        version = ("java", (1, 16, 2)),
-                        block = structure_block if solid == 1 and not finished else EMPTY_BLOCK,
-                    )
+                for tube_coordinates, tubes_so_far in zip(coordinates_so_far, tubes_so_far):
+                    for coordinates, solid in zip(generated_coordinates, generated_tube):
+                        if solid == -1:
+                            finished = True
+
+                        world.set_version_block(
+                            coordinates[0] + j * options["Progressive Generation Distance"],
+                            coordinates[1],
+                            coordinates[2],
+                            dimension,
+                            version = ("java", (1, 16, 2)),
+                            block = structure_block if solid == 1 and not finished else EMPTY_BLOCK,
+                        )
+            else:
+                for coordinates, solid in zip(generated_coordinates, generated_tube):
+                    if solid == -1:
+                        finished = True
+
+                    if coordinates in selection:
+                        world.set_version_block(
+                            coordinates[0],
+                            coordinates[1],
+                            coordinates[2],
+                            dimension,
+                            version = ("java", (1, 16, 2)),
+                            block = structure_block if solid == 1 and not finished else EMPTY_BLOCK,
+                        )
 
 def tube_idx_to_coordinates(box: SelectionBox, tube_idx: int, block_coords: list[tuple[int]], generation_size: BlockCoordinates = GENERATION_SIZE, tube_length: int = TUBE_LENGTH) -> BlockCoordinatesNDArray:
     # make np array where each element is its own coordinates
@@ -541,5 +563,7 @@ export = {
         "Top K": ["int", 8, 1, 256],
         "Top P": ["str", "0.9"],
         "Endpoint": ["str", "http://localhost:8001"],
+        "Progressive Generation": ["bool", False],
+        "Progressive Generation Distance": ["int", 64],
     },
 }
